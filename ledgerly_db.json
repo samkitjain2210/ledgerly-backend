@@ -1,0 +1,89 @@
+{
+  "u1": {
+    "biz1": {
+      "transactions": [
+        {
+          "amount": 100,
+          "type": "income",
+          "mode": "Cash",
+          "category": "Term Loan",
+          "accountType": "Liability",
+          "date": "2026-02-07",
+          "gstRate": 0,
+          "isInclusiveGST": false,
+          "desc": "₹100 loan taken.",
+          "netAmount": 100,
+          "id": 1770460070531,
+          "status": "confirmed",
+          "entries": [
+            {
+              "account": "Cash",
+              "dr": 100,
+              "cr": 0
+            },
+            {
+              "account": "Term Loan",
+              "dr": 0,
+              "cr": 100
+            }
+          ],
+          "history": [
+            {
+              "action": "created",
+              "by": "owner",
+              "at": "2026-02-07T10:27:50.531Z"
+            },
+            {
+              "action": "confirmed",
+              "by": "owner",
+              "at": "2026-02-07T10:27:50.559Z"
+            }
+          ]
+        },
+        {
+          "amount": 200,
+          "type": "expense",
+          "mode": "Cash",
+          "category": "Rent",
+          "accountType": "Expense",
+          "date": "2026-02-07",
+          "gstRate": 0,
+          "isInclusiveGST": false,
+          "desc": "paid rent 200",
+          "netAmount": 200,
+          "id": 1770460020516,
+          "status": "confirmed",
+          "entries": [
+            {
+              "account": "Rent",
+              "dr": 200,
+              "cr": 0
+            },
+            {
+              "account": "Cash",
+              "dr": 0,
+              "cr": 200
+            }
+          ],
+          "history": [
+            {
+              "action": "created",
+              "by": "owner",
+              "at": "2026-02-07T10:27:00.516Z"
+            },
+            {
+              "action": "confirmed",
+              "by": "owner",
+              "at": "2026-02-07T10:27:00.530Z"
+            }
+          ]
+        }
+      ],
+      "lockedMonths": []
+    },
+    "biz2": {
+      "transactions": [],
+      "lockedMonths": []
+    }
+  }
+}
