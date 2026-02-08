@@ -1,13 +1,13 @@
 /**
- * LEDGERLY.AI BACKEND (Render Ready)
- * Enables multiple users to register and login instantly.
+ * LEDGERLY.AI BACKEND (Robust for Render)
+ * Fixes empty file crashes and handles errors safely.
  */
 
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const multer = require('multer');
-const jwt = require('jsonwebtoken'); // This is already in your package.json
+const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
 
@@ -15,17 +15,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'ledgerly_db.json');
 
-// SECURITY: Use Render Environment Variable, or fallback
 const JWT_SECRET = process.env.JWT_SECRET || 'ledgerly_fallback_secret_key_v4';
 
-// --- MIDDLEWARE ---
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
-
-// Multer for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-// --- AUTH MIDDLEWARE (Protects /api/sync) ---
+// --- AUTH MIDDLEWARE ---
 const verifyToken = (req, res, next) => {
     const bearerHeader = req.headers['authorization'];
     
@@ -46,30 +42,43 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-// --- DATABASE HELPERS (JSON File) ---
+// --- DATABASE HELPERS (SAFE READ/WRITE) ---
 const readData = () => {
+    // 1. Check if file exists
     if (!fs.existsSync(DATA_FILE)) {
-        // Initialize DB if missing
+        console.log("Initializing new database file...");
         const initialData = {
             users: [],
             data: {} 
         };
-        fs.writeFileSync(DATA_FILE, JSON.stringify(initialData, null, 2));
+        try {
+            fs.writeFileSync(DATA_FILE, JSON.stringify(initialData, null, 2));
+        } catch (e) {
+            console.error("Critical: Cannot write to disk", e);
+        }
         return initialData;
     }
     
     try {
         const rawData = fs.readFileSync(DATA_FILE, 'utf8');
-        if (!rawData) return { users: [], data: {} };
+        // 2. FIX FOR 500 ERROR: Check if file is empty string
+        if (!rawData || rawData.trim() === '') {
+            console.log("Database file is empty. Resetting...");
+            return { users: [], data: {} };
+        }
         return JSON.parse(rawData);
     } catch (e) {
-        console.error("Database file error, resetting...", e);
+        console.error("Database error, resetting...", e);
+        // Return empty structure if corrupted
         return { users: [], data: {} };
     }
 };
 
 const writeData = (data) => {
     try {
+        // Ensure we always write valid JSON
+        if (!data.users) data.users = [];
+        if (!data.data) data.data = {};
         fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
     } catch (e) {
         console.error("Failed to write DB:", e);
@@ -78,38 +87,38 @@ const writeData = (data) => {
 
 // --- ROUTES ---
 
-// Health Check
 app.get('/', (req, res) => {
     res.send('Ledgerly.ai Backend is Running 🚀');
 });
 
-// 1. REGISTER ROUTE (Instant Login)
+// 1. REGISTER
 app.post('/api/auth/register', (req, res) => {
     try {
         const { email, password, name } = req.body;
         const db = readData();
 
-        // 1. Check if user already exists
+        // Safety check
+        if (!db.users) db.users = [];
+
+        // Check if user exists
         const exists = db.users.find(u => u.email === email);
         if (exists) {
             return res.status(400).json({ error: 'Email already registered' });
         }
 
-        // 2. Create Unique User ID
+        // Create User
         const newUserId = 'u' + Date.now() + Math.floor(Math.random() * 1000);
-        
         const newUser = {
             id: newUserId,
             email,
-            password, // Note: In production, use bcryptjs to hash this!
+            password,
             name,
             role: 'owner'
         };
 
-        // 3. Add to Users Array
         db.users.push(newUser);
 
-        // 4. Create a Default Business for this user
+        // Create Default Business
         const bizId = 'biz' + Date.now();
         const newBusiness = {
             id: bizId,
@@ -118,18 +127,14 @@ app.post('/api/auth/register', (req, res) => {
             lockedMonths: []
         };
 
-        // 5. Link Business to User in Data
-        db.data[newUserId] = {
-            [bizId]: newBusiness
-        };
+        // Link Business
+        if (!db.data[newUserId]) db.data[newUserId] = {};
+        db.data[newUserId][bizId] = newBusiness;
 
-        // 6. WRITE TO FILE
         writeData(db);
 
-        // 7. Generate Token (Instant Login)
         const token = jwt.sign({ id: newUserId }, JWT_SECRET, { expiresIn: '7d' });
 
-        // 8. Return Data (Format matches Frontend)
         res.json({
             token,
             user: newUser,
@@ -137,15 +142,15 @@ app.post('/api/auth/register', (req, res) => {
             transactions: []
         });
 
-        console.log(`✅ New User Registered: ${email}`);
+        console.log(`✅ New Registered: ${email}`);
 
     } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: 'Server error during registration' });
+        console.error("Registration Error:", e);
+        res.status(500).json({ error: 'Registration failed: ' + e.message });
     }
 });
 
-// 2. LOGIN ROUTE
+// 2. LOGIN
 app.post('/api/auth/login', (req, res) => {
     try {
         const { email, password } = req.body;
@@ -154,12 +159,11 @@ app.post('/api/auth/login', (req, res) => {
         const user = db.users.find(u => u.email === email);
 
         if (!user || user.password !== password) {
-            return res.status(401).json({ error: 'Invalid email or password' });
+            return res.status(401).json({ error: 'Invalid credentials' });
         }
 
         const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '7d' });
 
-        // Fetch User's Businesses and Transactions
         const userBizs = db.data[user.id] || {};
         const businesses = Object.values(userBizs);
         const transactions = businesses.flatMap(b => b.transactions || []);
@@ -171,15 +175,15 @@ app.post('/api/auth/login', (req, res) => {
             transactions
         });
 
-        console.log(`🔑 User Logged In: ${email}`);
+        console.log(`🔑 Login: ${email}`);
 
     } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: 'Server error during login' });
+        console.error("Login Error:", e);
+        res.status(500).json({ error: 'Login failed' });
     }
 });
 
-// 3. SYNC ROUTES (Protected)
+// 3. SYNC
 app.get('/api/sync', verifyToken, (req, res) => {
     try {
         const db = readData();
@@ -199,7 +203,7 @@ app.get('/api/sync', verifyToken, (req, res) => {
             transactions
         });
     } catch (e) {
-        console.error(e);
+        console.error("Sync Get Error:", e);
         res.status(500).json({ error: 'Sync failed' });
     }
 });
@@ -212,42 +216,36 @@ app.post('/api/sync', verifyToken, (req, res) => {
 
         if (!db.data[uid]) return res.status(404).json({ error: 'User not found' });
 
-        // Update Logic: Clear existing, re-add incoming
         const userBizs = db.data[uid];
         for (let bizId in userBizs) {
             userBizs[bizId].transactions = [];
         }
 
         transactions.forEach(tx => {
-            if (userBizs[tx.businessId]) {
+            if(userBizs[tx.businessId]) {
                 userBizs[tx.businessId].transactions.push(tx);
             }
         });
 
         writeData(db);
         res.json({ success: true });
-
     } catch (e) {
-        console.error(e);
+        console.error("Sync Save Error:", e);
         res.status(500).json({ error: 'Save failed' });
     }
 });
 
-// 4. UPLOAD ENDPOINT (Protected)
+// 4. UPLOAD
 app.post('/api/upload', verifyToken, upload.single('file'), (req, res) => {
     setTimeout(() => {
         const mockData = [
             { date: new Date().toISOString().split('T')[0], desc: 'Amazon Web Services', amount: 2500 },
-            { date: new Date().toISOString().split('T')[0], desc: 'Client Payment #402', amount: 15000 },
-            { date: new Date().toISOString().split('T')[0], desc: 'Office Snacks', amount: 450 }
+            { date: new Date().toISOString().split('T')[0], desc: 'Client Payment #402', amount: 15000 }
         ];
         res.json({ success: true, data: mockData });
     }, 1000);
 });
 
-// --- START SERVER ---
 app.listen(PORT, () => {
-    console.log(`\n🚀 Server running on port ${PORT}`);
-    console.log(`📁 Data File: ${DATA_FILE}`);
-    console.log(`🔐 Ready for Login/Register`);
+    console.log(`Server running on port ${PORT}`);
 });
