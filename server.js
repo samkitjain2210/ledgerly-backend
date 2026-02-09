@@ -1,6 +1,6 @@
 /**
- * LEDGERLY.AI BACKEND (Robust for Render)
- * Fixes empty file crashes and handles errors safely.
+ * LEDGERLY.AI BACKEND (Render Robust)
+ * Fixes: Corrupt DB handling, and strict JSON checks.
  */
 
 const express = require('express');
@@ -24,11 +24,9 @@ const upload = multer({ storage: multer.memoryStorage() });
 // --- AUTH MIDDLEWARE ---
 const verifyToken = (req, res, next) => {
     const bearerHeader = req.headers['authorization'];
-    
     if (typeof bearerHeader !== 'undefined') {
         const bearer = bearerHeader.split(' ');
         const token = bearer[1];
-        
         jwt.verify(token, JWT_SECRET, (err, authData) => {
             if (err) {
                 return res.status(401).json({ error: 'Invalid Token' });
@@ -42,46 +40,58 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-// --- DATABASE HELPERS (SAFE READ/WRITE) ---
+// --- DATABASE HELPERS (FAIL SAFE) ---
 const readData = () => {
-    // 1. Check if file exists
-    if (!fs.existsSync(DATA_FILE)) {
-        console.log("Initializing new database file...");
-        const initialData = {
-            users: [],
-            data: {} 
-        };
-        try {
-            fs.writeFileSync(DATA_FILE, JSON.stringify(initialData, null, 2));
-        } catch (e) {
-            console.error("Critical: Cannot write to disk", e);
-        }
-        return initialData;
-    }
-    
     try {
-        const rawData = fs.readFileSync(DATA_FILE, 'utf8');
-        // 2. FIX FOR 500 ERROR: Check if file is empty string
-        if (!rawData || rawData.trim() === '') {
-            console.log("Database file is empty. Resetting...");
+        // If file doesn't exist, return default
+        if (!fs.existsSync(DATA_FILE)) {
+            console.log("DB missing. Creating new one.");
             return { users: [], data: {} };
         }
-        return JSON.parse(rawData);
+
+        const rawData = fs.readFileSync(DATA_FILE, 'utf8');
+
+        // Check for empty file
+        if (!rawData || rawData.trim() === '') {
+            console.log("DB empty. Resetting.");
+            return { users: [], data: {} };
+        }
+
+        const parsed = JSON.parse(rawData);
+        
+        // Validate Structure
+        if (!parsed.users || !parsed.data) {
+            console.error("DB Structure Invalid. Resetting.");
+            return { users: [], data: {} };
+        }
+
+        return parsed;
+
     } catch (e) {
-        console.error("Database error, resetting...", e);
-        // Return empty structure if corrupted
+        console.error("CRITICAL: Database Corrupted! Resetting...", e);
+        
+        // NUCLEAR OPTION: Delete bad file so next write succeeds
+        try {
+            if (fs.existsSync(DATA_FILE)) {
+                fs.unlinkSync(DATA_FILE);
+            }
+        } catch(unlinkErr) {
+            console.error("Could not delete DB:", unlinkErr);
+        }
+        
+        // Return fresh structure
         return { users: [], data: {} };
     }
 };
 
 const writeData = (data) => {
     try {
-        // Ensure we always write valid JSON
-        if (!data.users) data.users = [];
-        if (!data.data) data.data = {};
-        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+        // Force write
+        const jsonStr = JSON.stringify(data, null, 2);
+        fs.writeFileSync(DATA_FILE, jsonStr);
     } catch (e) {
-        console.error("Failed to write DB:", e);
+        console.error("CRITICAL: Write Failed!", e);
+        throw e; // Re-throw so route returns 500
     }
 };
 
@@ -97,10 +107,11 @@ app.post('/api/auth/register', (req, res) => {
         const { email, password, name } = req.body;
         const db = readData();
 
-        // Safety check
+        // Safety Check
         if (!db.users) db.users = [];
+        if (!db.data) db.data = {};
 
-        // Check if user exists
+        // Check existence
         const exists = db.users.find(u => u.email === email);
         if (exists) {
             return res.status(400).json({ error: 'Email already registered' });
@@ -118,7 +129,7 @@ app.post('/api/auth/register', (req, res) => {
 
         db.users.push(newUser);
 
-        // Create Default Business
+        // Create Business
         const bizId = 'biz' + Date.now();
         const newBusiness = {
             id: bizId,
@@ -127,9 +138,9 @@ app.post('/api/auth/register', (req, res) => {
             lockedMonths: []
         };
 
-        // Link Business
-        if (!db.data[newUserId]) db.data[newUserId] = {};
-        db.data[newUserId][bizId] = newBusiness;
+        db.data[newUserId] = {
+            [bizId]: newBusiness
+        };
 
         writeData(db);
 
@@ -142,11 +153,11 @@ app.post('/api/auth/register', (req, res) => {
             transactions: []
         });
 
-        console.log(`✅ New Registered: ${email}`);
+        console.log(`✅ Registered: ${email}`);
 
     } catch (e) {
-        console.error("Registration Error:", e);
-        res.status(500).json({ error: 'Registration failed: ' + e.message });
+        console.error("Register Error:", e);
+        res.status(500).json({ error: 'Server error during registration' });
     }
 });
 
@@ -222,13 +233,14 @@ app.post('/api/sync', verifyToken, (req, res) => {
         }
 
         transactions.forEach(tx => {
-            if(userBizs[tx.businessId]) {
+            if (userBizs[tx.businessId]) {
                 userBizs[tx.businessId].transactions.push(tx);
             }
         });
 
         writeData(db);
         res.json({ success: true });
+
     } catch (e) {
         console.error("Sync Save Error:", e);
         res.status(500).json({ error: 'Save failed' });
