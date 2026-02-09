@@ -41,52 +41,71 @@ const verifyToken = (req, res, next) => {
 
 // --- DATABASE HELPERS (FAIL-SAFE) ---
 const readData = () => {
-    if (!fs.existsSync(DATA_FILE)) {
-        console.log("Database file missing. Creating new one.");
-        const initialData = {
-            users: [],
-            data: {}
-        };
-        try {
-            fs.writeFileSync(DATA_FILE, JSON.stringify(initialData, null, 2));
-            return initialData;
-        } catch (e) {
-            console.error("CRITICAL: Failed to create DB file", e);
-            return { users: [], data: {} }; // Fallback to prevent crash
-        }
-    }
-
+    let db;
+    
+    // 1. Try to read the file first
     try {
+        // Check if file exists
+        if (!fs.existsSync(DATA_FILE)) {
+            console.log("Database file missing. Creating new one.");
+            return {
+                users: [],
+                data: {} 
+            };
+        }
+
         const rawData = fs.readFileSync(DATA_FILE, 'utf8');
+        
+        // Handle empty file content
         if (!rawData || rawData.trim() === '') {
-            console.error("Database file is empty. Resetting.");
-            return { users: [], data: {} };
+            console.log("Database file is empty. Resetting.");
+            return {
+                users: [],
+                data: {} 
+            };
         }
         
+        // 2. Parse JSON
         try {
-            return JSON.parse(rawData);
+            db = JSON.parse(rawData);
         } catch (jsonErr) {
-            console.error("CRITICAL: Database file is corrupted! Resetting...", jsonErr);
-            // Safety mechanism: Reset file to prevent crash
-            try { 
-                if (fs.existsSync(DATA_FILE)) fs.unlinkSync(DATA_FILE); 
-            } catch(unlinkErr) {}
-            return { users: [], data: {} };
+            console.error("Database file is corrupted! Resetting to safe defaults...", jsonErr);
+            
+            // FALLBACK: Create a fresh DB object to prevent the crash
+            db = {
+                users: [],
+                data: {} 
+            };
         }
-    } catch (e) {
-        console.error("CRITICAL: Failed to read DB unexpectedly. Using fallback.", e);
-        return { users: [], data: {} };
+    } catch (fsErr) {
+        console.error("CRITICAL: Failed to read DB from file:", fsErr);
+        
+        // ULTIMATE FALLBACK: Return safe structure to prevent server crash
+        db = {
+            users: [],
+            data: {} 
+        };
     }
+
+    // 3. FINAL SAFETY CHECK
+    // Ensure we are definitely returning a valid object
+    if (!db || typeof db !== 'object' || !db.users || !db.data) {
+        console.error("CRITICAL: DB Structure Invalid. Returning safe defaults.");
+        return {
+            users: [],
+            data: {} 
+        };
+    }
+    
+    return db;
 };
 
 const writeData = (data) => {
     try {
         fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-        console.log("Database saved successfully.");
     } catch (e) {
-        console.error("CRITICAL: Failed to write DB:", e);
-        // Throw error so 500 is returned to frontend correctly
-        throw new Error('Database Write Failed'); 
+        console.error("Failed to write DB:", e);
+        throw e; 
     }
 };
 
@@ -283,3 +302,4 @@ app.listen(PORT, () => {
     console.log(`🧠 Accounting Logic: SERVER SIDE (Active)`);
     console.log(`🧠 Smart Entry: Ready (Debits/Credits calculated automatically)`);
 });
+
