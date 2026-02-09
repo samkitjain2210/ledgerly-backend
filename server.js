@@ -1,6 +1,7 @@
 /**
- * LEDGERLY.AI BACKEND (SAFE MODE)
- * Fixes: Startup crashes, Database corruption handling, and detailed logging.
+ * LEDGERLY.AI BACKEND (Robust Event-Based Accounting)
+ * Philosophy: Events (Text Input) -> Internal Journal Entries.
+ * Fixes: Robust error handling for "Status 1" crashes.
  */
 
 const express = require('express');
@@ -19,6 +20,24 @@ const JWT_SECRET = process.env.JWT_SECRET || 'ledgerly_secure_v4';
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 const upload = multer({ storage: multer.memoryStorage() });
+
+// --- AUTH MIDDLEWARE ---
+const verifyToken = (req, res, next) => {
+    const bearerHeader = req.headers['authorization'];
+    if (typeof bearerHeader !== 'undefined') {
+        const bearer = bearerHeader.split(' ');
+        const token = bearer[1];
+        jwt.verify(token, JWT_SECRET, (err, authData) => {
+            if (err) return res.status(401).json({ error: 'Invalid Token' });
+            else {
+                req.userId = authData.id;
+                next();
+            }
+        });
+    } else {
+        res.status(403).json({ error: 'No token provided' });
+    }
+};
 
 // --- DATABASE HELPERS (FAIL-SAFE) ---
 const readData = () => {
@@ -39,7 +58,6 @@ const readData = () => {
 
     try {
         const rawData = fs.readFileSync(DATA_FILE, 'utf8');
-        // Validate JSON content
         if (!rawData || rawData.trim() === '') {
             console.error("Database file is empty. Resetting.");
             return { users: [], data: {} };
@@ -48,15 +66,15 @@ const readData = () => {
         try {
             return JSON.parse(rawData);
         } catch (jsonErr) {
-            console.error("CRITICAL: Database file is corrupted! Resetting to safe defaults.", jsonErr);
-            // Safety mechanism: Reset the file content
+            console.error("CRITICAL: Database file is corrupted! Resetting...", jsonErr);
+            // Safety mechanism: Reset file to prevent crash
             try { 
                 if (fs.existsSync(DATA_FILE)) fs.unlinkSync(DATA_FILE); 
             } catch(unlinkErr) {}
             return { users: [], data: {} };
         }
     } catch (e) {
-        console.error("CRITICAL: Read failed unexpectedly. Using fallback.", e);
+        console.error("CRITICAL: Failed to read DB unexpectedly. Using fallback.", e);
         return { users: [], data: {} };
     }
 };
@@ -64,134 +82,96 @@ const readData = () => {
 const writeData = (data) => {
     try {
         fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+        console.log("Database saved successfully.");
     } catch (e) {
-        console.error("Failed to write DB:", e);
-        throw e; // Re-throw to let the API return 500
+        console.error("CRITICAL: Failed to write DB:", e);
+        // Throw error so 500 is returned to frontend correctly
+        throw new Error('Database Write Failed'); 
     }
-};
-
-// --- AUTH MIDDLEWARE ---
-const verifyToken = (req, res, next) => {
-    const bearerHeader = req.headers['authorization'];
-    if (typeof bearerHeader !== 'undefined') {
-        const bearer = bearerHeader.split(' ');
-        const token = bearer[1];
-        jwt.verify(token, JWT_SECRET, (err, authData) => {
-            if (err) return res.status(401).json({ error: 'Invalid Token' });
-            else {
-                req.userId = authData.id;
-                next();
-            }
-        });
-    } else {
-        res.status(403).json({ error: 'No token provided' });
-    }
-};
-
-// --- ACCOUNTING ENGINE (SERVER SIDE) ---
-
-// 1. Chart of Accounts
-const COA = {
-    Asset: ['Cash', 'Bank', 'Equipment', 'Input Tax Credit', 'Receivables'],
-    Liability: ['Term Loan', 'GST Payable', 'Vendor Payables'],
-    Income: ['Sales', 'Service Income', 'Refunds'],
-    Expense: ['Rent', 'Salary', 'Utilities', 'Office Supplies', 'Professional Fees'],
-    Equity: ['Capital']
-};
-
-// 2. GST Calculator
-const calculateGST = (amount, rate, isInclusive) => {
-    let base = 0, gst = 0;
-    if (isInclusive) {
-        base = Math.round(amount / (1 + (rate / 100)));
-        gst = amount - base;
-    } else {
-        base = amount;
-        gst = Math.round(base * (rate / 100));
-    }
-    return { base, gst, total: base + gst };
-};
-
-// 3. Journal Entry Generator
-const generateJournalEntries = (text, amount, mode, accountType, category, gstRate, isInclusiveGST, businessId) => {
-    const entries = [];
-    const gstCalc = calculateGST(amount, gstRate, isInclusiveGST);
-
-    if (accountType === 'Income') {
-        entries.push({ account: mode === 'Cash' ? 'Cash' : 'Bank', dr: gstCalc.total, cr: 0 });
-        entries.push({ account: category, dr: 0, cr: gstCalc.base });
-        if (gstCalc.gst > 0) entries.push({ account: 'GST Payable', dr: 0, cr: gstCalc.gst });
-    }
-    else if (accountType === 'Expense') {
-        entries.push({ account: category, dr: gstCalc.base, cr: 0 });
-        if (gstCalc.gst > 0) entries.push({ account: 'Input Tax Credit', dr: gstCalc.gst, cr: 0 });
-        entries.push({ account: mode === 'Cash' ? 'Cash' : 'Bank', dr: 0, cr: gstCalc.total });
-    }
-    else if (accountType === 'Asset') {
-        entries.push({ account: category, dr: amount, cr: 0 });
-        entries.push({ account: mode === 'Cash' ? 'Cash' : 'Bank', dr: 0, cr: amount });
-    }
-    else if (accountType === 'Liability') {
-        entries.push({ account: mode === 'Cash' ? 'Cash' : 'Bank', dr: amount, cr: 0 });
-        entries.push({ account: category, dr: 0, cr: amount });
-    }
-    else if (accountType === 'Equity') {
-        entries.push({ account: mode === 'Cash' ? 'Cash' : 'Bank', dr: amount, cr: 0 });
-        entries.push({ account: 'Capital', dr: 0, cr: amount });
-    }
-    
-    return entries;
-};
-
-// 4. NLP Parser (Server Side)
-const parseTransactionText = (text) => {
-    const lower = text.toLowerCase();
-    let amount = 0, gstRate = 0, type = 'expense', mode = 'Cash', category = 'General', accountType = 'Expense';
-    let isInclusiveGST = false;
-    let date = new Date().toISOString().split('T')[0];
-
-    const amtMatch = text.match(/(\d+(\,\d+)*(\.\d{1,2})?)/);
-    if (amtMatch) amount = parseFloat(amtMatch[0].replace(/,/g, ''));
-
-    if (lower.includes('gst')) {
-        const gstMatch = text.match(/(\d+)%?/);
-        if (gstMatch) gstRate = parseFloat(gstMatch[1]);
-        else gstRate = 18;
-    }
-    if (lower.includes('incl') || lower.includes('included')) isInclusiveGST = true;
-
-    if (lower.includes('bank') || lower.includes('transfer')) mode = 'Bank';
-    else if (lower.includes('upi')) mode = 'UPI';
-
-    if (['received', 'got', 'sale'].some(k => lower.includes(k))) {
-        type = 'income';
-        accountType = 'Income';
-        if (lower.includes('refund')) category = 'Refunds';
-        else if (type === 'income') category = 'Sales';
-    } else {
-        type = 'expense';
-        accountType = 'Expense';
-        if (lower.includes('rent')) category = 'Rent';
-        else if (lower.includes('salary')) category = 'Salary';
-        else if (lower.includes('food') || lower.includes('lunch')) category = 'Office Supplies';
-    }
-
-    return { amount, type, mode, category, accountType, date, gstRate, isInclusiveGST, desc: text };
 };
 
 // --- ROUTES ---
 
-// 1. Health Check (Useful for Render)
+// 1. Health Check
 app.get('/', (req, res) => {
     res.send('Ledgerly.ai Backend is Running 🚀');
 });
 
-// 2. LOGIN
+// 2. Smart Entry (The Brain)
+app.post('/api/smart-entry', verifyToken, (req, res) => {
+    const { text } = req.body;
+
+    console.log(`Processing Smart Entry for User: ${req.userId} - "${text}"`);
+
+    try {
+        // 1. Parse Text
+        const parsed = parseTransactionText(text);
+        if (parsed.amount === 0) {
+            return res.status(400).json({ error: 'No valid amount found in text' });
+        }
+
+        // 2. Get DB & Business
+        const db = readData();
+        const uid = req.userId;
+        const userBizs = db.data[uid] || {};
+        const bizIds = Object.keys(userBizs);
+        const currentBizId = bizIds.length > 0 ? bizIds[0] : null;
+
+        if (!currentBizId) {
+            return res.status(404).json({ error: 'No business found for this user' });
+        }
+
+        // 3. Generate Double Entries
+        const entries = generateJournalEntries(
+            parsed.text,
+            parsed.amount,
+            parsed.mode,
+            parsed.accountType,
+            parsed.category,
+            parsed.gstRate,
+            parsed.isInclusiveGST,
+            currentBizId
+        );
+
+        // 4. Create Event
+        const fullTx = {
+            ...parsed,
+            id: Date.now(),
+            businessId: currentBizId,
+            status: 'draft',
+            entries
+        };
+
+        // 5. Save to DB
+        if (!userBizs[currentBizId]) userBizs[currentBizId] = { transactions: [] };
+        userBizs[currentBizId].transactions.unshift(fullTx);
+        writeData(db);
+
+        // 6. Return Success
+        res.json({ 
+            success: true, 
+            transaction: fullTx 
+        });
+
+    } catch (e) {
+        console.error("Smart Entry Server Error:", e.message || e); // Log specific message
+        console.error("Stack Trace:", e.stack); // Log stack for debugging
+
+        // Check for common specific errors
+        if (e.message && e.message.includes("EACCES")) {
+            return res.status(500).json({ error: 'Module Missing Error: Please run "npm install jsonwebtoken"' });
+        }
+        
+        // General Server Error
+        return res.status(500).json({ error: 'Internal Server Error: ' + (e.message || 'Unknown error') });
+    }
+});
+
+// 3. Login
 app.post('/api/auth/login', (req, res) => {
     try {
         const { email, password } = req.body;
         const db = readData();
-
         const user = db.users.find(u => u.email === email);
 
         if (!user || user.password !== password) {
@@ -209,14 +189,13 @@ app.post('/api/auth/login', (req, res) => {
             businesses,
             transactions
         });
-        console.log(`Login success: ${email}`);
     } catch (e) {
         console.error("Login Error:", e);
         res.status(500).json({ error: 'Login failed' });
     }
 });
 
-// 3. REGISTER
+// 4. Register
 app.post('/api/auth/register', (req, res) => {
     try {
         const { email, password, name } = req.body;
@@ -237,64 +216,13 @@ app.post('/api/auth/register', (req, res) => {
 
         const token = jwt.sign({ id: newUserId }, JWT_SECRET, { expiresIn: '7d' });
         res.json({ token, user: newUser, businesses: [newBusiness], transactions: [] });
-        console.log(`Register success: ${email}`);
     } catch (e) {
         console.error("Register Error:", e);
         res.status(500).json({ error: 'Registration failed' });
     }
 });
 
-// 4. SMART ENTRY (NEW BRAIN)
-app.post('/api/smart-entry', verifyToken, (req, res) => {
-    try {
-        const { text } = req.body;
-        const parsed = parseTransactionText(text);
-        
-        if (parsed.amount === 0) return res.status(400).json({ error: 'No valid amount found' });
-
-        const db = readData();
-        const uid = req.userId;
-        const userBizs = db.data[uid] || {};
-        const bizIds = Object.keys(userBizs);
-        const currentBizId = bizIds.length > 0 ? bizIds[0] : null;
-
-        if (!currentBizId) return res.status(404).json({ error: 'No business found' });
-
-        const entries = generateJournalEntries(
-            parsed.text,
-            parsed.amount,
-            parsed.mode,
-            parsed.accountType,
-            parsed.category,
-            parsed.gstRate,
-            parsed.isInclusiveGST,
-            currentBizId
-        );
-
-        const fullTx = {
-            ...parsed,
-            id: Date.now(),
-            businessId: currentBizId,
-            status: 'confirmed',
-            entries
-        };
-
-        if (!userBizs[currentBizId]) userBizs[currentBizId] = { transactions: [] };
-        userBizs[currentBizId].transactions.unshift(fullTx);
-        writeData(db);
-
-        res.json({
-            success: true,
-            transaction: fullTx
-        });
-        console.log(`Smart entry success: ${text}`);
-    } catch (e) {
-        console.error("Smart Entry Error:", e);
-        res.status(500).json({ error: 'Failed to process entry' });
-    }
-});
-
-// 5. SYNC (Standard)
+// 5. Sync
 app.get('/api/sync', verifyToken, (req, res) => {
     try {
         const db = readData();
@@ -319,7 +247,6 @@ app.post('/api/sync', verifyToken, (req, res) => {
         const uid = req.userId;
 
         if (!db.data[uid]) return res.status(404).json({ error: 'User not found' });
-
         const userBizs = db.data[uid];
         
         for (let bizId in userBizs) {
@@ -338,7 +265,7 @@ app.post('/api/sync', verifyToken, (req, res) => {
     }
 });
 
-// 6. UPLOAD
+// 6. Upload
 app.post('/api/upload', verifyToken, upload.single('file'), (req, res) => {
     setTimeout(() => {
         const mockData = [
@@ -351,7 +278,7 @@ app.post('/api/upload', verifyToken, upload.single('file'), (req, res) => {
 
 // --- START SERVER ---
 app.listen(PORT, () => {
-    console.log(`\n🧠 LEDGERLY.AI (SAFE MODE) RUNNING 🚀`);
+    console.log(`\n🧠 LEDGERLY.AI (EVENT-BASED ENGINE) RUNNING 🚀`);
     console.log(`📁 Database: ${DATA_FILE}`);
     console.log(`🧠 Accounting Logic: SERVER SIDE (Active)`);
     console.log(`🧠 Smart Entry: Ready (Debits/Credits calculated automatically)`);
