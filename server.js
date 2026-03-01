@@ -25,7 +25,10 @@ const PORT = process.env.PORT || 3000;
 // ─────────────────────────────────────────────
 const JWT_SECRET  = process.env.JWT_SECRET;
 const DATA_FILE   = process.env.DB_PATH || path.join(__dirname, 'ledgerly_db.json');
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',');
+const ALLOWED_ORIGINS = [
+    'https://ledgerly-frontend-omega.vercel.app',
+    'http://localhost:3000'
+];
 
 if (!JWT_SECRET) {
     console.error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
@@ -41,14 +44,15 @@ app.use(helmet());
 
 // FIX #10: CORS locked to allowed origins only
 app.use(cors({
-    origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, curl, Postman)
-        if (!origin || ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-        callback(new Error('Not allowed by CORS'));
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    origin: [
+        'https://ledgerly-frontend-omega.vercel.app',
+        'http://localhost:3000'
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
 }));
+
 
 // FIX #6: body-parser removed — Express 5 has it built in
 app.use(express.json({ limit: '10mb' }));
@@ -650,3 +654,4 @@ const shutdown = (signal) => {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
+
