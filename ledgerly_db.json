@@ -1,89 +1,103 @@
 {
-  "u1": {
+  "_meta": {
+    "schemaVersion": "2.0",
+    "appVersion": "4.4",
+    "createdAt": "2026-02-07T00:00:00.000Z",
+    "lastUpdatedAt": "2026-02-07T10:27:50.559Z",
+    "description": "Ledgerly.ai flat-file database. Top-level keys: _meta, users, businesses, transactions."
+  },
+
+  "users": {
+    "u1": {
+      "id": "u1",
+      "name": "John Doe",
+      "email": "john@example.com",
+      "passwordHash": "$2b$10$REPLACE_WITH_BCRYPT_HASH",
+      "role": "owner",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "lastLoginAt": "2026-02-07T10:00:00.000Z",
+      "businesses": ["biz1", "biz2"]
+    }
+  },
+
+  "businesses": {
     "biz1": {
-      "transactions": [
-        {
-          "amount": 100,
-          "type": "income",
-          "mode": "Cash",
-          "category": "Term Loan",
-          "accountType": "Liability",
-          "date": "2026-02-07",
-          "gstRate": 0,
-          "isInclusiveGST": false,
-          "desc": "₹100 loan taken.",
-          "netAmount": 100,
-          "id": 1770460070531,
-          "status": "confirmed",
-          "entries": [
-            {
-              "account": "Cash",
-              "dr": 100,
-              "cr": 0
-            },
-            {
-              "account": "Term Loan",
-              "dr": 0,
-              "cr": 100
-            }
-          ],
-          "history": [
-            {
-              "action": "created",
-              "by": "owner",
-              "at": "2026-02-07T10:27:50.531Z"
-            },
-            {
-              "action": "confirmed",
-              "by": "owner",
-              "at": "2026-02-07T10:27:50.559Z"
-            }
-          ]
-        },
-        {
-          "amount": 200,
-          "type": "expense",
-          "mode": "Cash",
-          "category": "Rent",
-          "accountType": "Expense",
-          "date": "2026-02-07",
-          "gstRate": 0,
-          "isInclusiveGST": false,
-          "desc": "paid rent 200",
-          "netAmount": 200,
-          "id": 1770460020516,
-          "status": "confirmed",
-          "entries": [
-            {
-              "account": "Rent",
-              "dr": 200,
-              "cr": 0
-            },
-            {
-              "account": "Cash",
-              "dr": 0,
-              "cr": 200
-            }
-          ],
-          "history": [
-            {
-              "action": "created",
-              "by": "owner",
-              "at": "2026-02-07T10:27:00.516Z"
-            },
-            {
-              "action": "confirmed",
-              "by": "owner",
-              "at": "2026-02-07T10:27:00.530Z"
-            }
-          ]
-        }
-      ],
+      "id": "biz1",
+      "ownerId": "u1",
+      "name": "My General Store",
+      "type": "retail",
+      "currency": "INR",
+      "gstNumber": "",
+      "financialYearStart": "04",
+      "createdAt": "2026-01-01T00:00:00.000Z",
       "lockedMonths": []
     },
     "biz2": {
-      "transactions": [],
+      "id": "biz2",
+      "ownerId": "u1",
+      "name": "Freelance Web Dev",
+      "type": "service",
+      "currency": "INR",
+      "gstNumber": "",
+      "financialYearStart": "04",
+      "createdAt": "2026-01-01T00:00:00.000Z",
       "lockedMonths": []
     }
+  },
+
+  "transactions": {
+    "biz1": [
+      {
+        "id": 1770460070531,
+        "businessId": "biz1",
+        "desc": "₹100 loan taken.",
+        "date": "2026-02-07",
+        "accountType": "Liability",
+        "category": "Term Loan",
+        "mode": "Cash",
+        "netAmount": 100,
+        "gstRate": 0,
+        "gstAmount": 0,
+        "grossAmount": 100,
+        "isInclusiveGST": false,
+        "status": "confirmed",
+        "entries": [
+          { "account": "Cash",      "dr": 100, "cr": 0 },
+          { "account": "Term Loan", "dr": 0,   "cr": 100 }
+        ],
+        "history": [
+          { "action": "created",   "byUserId": "u1", "at": "2026-02-07T10:27:50.531Z" },
+          { "action": "confirmed", "byUserId": "u1", "at": "2026-02-07T10:27:50.559Z" }
+        ],
+        "createdAt": "2026-02-07T10:27:50.531Z",
+        "updatedAt": "2026-02-07T10:27:50.559Z"
+      },
+      {
+        "id": 1770460020516,
+        "businessId": "biz1",
+        "desc": "Paid rent 200",
+        "date": "2026-02-07",
+        "accountType": "Expense",
+        "category": "Rent",
+        "mode": "Cash",
+        "netAmount": 200,
+        "gstRate": 0,
+        "gstAmount": 0,
+        "grossAmount": 200,
+        "isInclusiveGST": false,
+        "status": "confirmed",
+        "entries": [
+          { "account": "Rent", "dr": 200, "cr": 0 },
+          { "account": "Cash", "dr": 0,   "cr": 200 }
+        ],
+        "history": [
+          { "action": "created",   "byUserId": "u1", "at": "2026-02-07T10:27:00.516Z" },
+          { "action": "confirmed", "byUserId": "u1", "at": "2026-02-07T10:27:00.530Z" }
+        ],
+        "createdAt": "2026-02-07T10:27:00.516Z",
+        "updatedAt": "2026-02-07T10:27:00.530Z"
+      }
+    ],
+    "biz2": []
   }
 }
